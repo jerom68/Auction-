@@ -1,54 +1,75 @@
-import discord
-from discord.ext import commands
-import asyncio
 import os
+import discord
+from discord.ext import commands, tasks
+from discord import app_commands
+import asyncio
 
-# Bot Setup
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents)
+TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+AUCTION_CHANNEL_ID = int(os.getenv("AUCTION_CHANNEL_ID"))
+REGISTER_CHANNEL_ID = int(os.getenv("REGISTER_CHANNEL_ID"))
+LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
+AUCTION_ROLE_ID = int(os.getenv("AUCTION_ROLE_ID"))
 
-# Auction Data Storage
-auctions = []
-bidders = {}
+bot = commands.Bot(command_prefix="@", intents=discord.Intents.all())
 
-# Auction Role ID (Replace with your role ID)
-AUCTION_ROLE_ID = 1234567890  
-LOG_CHANNEL_ID = 1234567890  
-AUCTION_CHANNEL_ID = 1234567890  
-REGISTRATION_CHANNEL_ID = 1234567890  
+auctions = []  # Stores auction Pokémon details
+
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user}")
+    await bot.tree.sync()
+    print("Slash commands synced!")
 
 # Slash Command for Registration
-@bot.slash_command(name="register", description="Register a Pokémon for auction.")
-async def register(ctx, pokemon_name: str, sb: int, bi: int, level: int, total_ivs: int, hp_iv: int, atk_iv: int, def_iv: int, spdef_iv: int, spatk_iv: int, spd_iv: int):
-    if AUCTION_ROLE_ID not in [role.id for role in ctx.author.roles]:
-        await ctx.respond("You don't have permission to register Pokémon.", ephemeral=True)
-        return
+@bot.tree.command(name="register", description="Register a Pokémon for auction")
+@app_commands.describe(
+    pokemon="Pokémon Name",
+    sb="Starting Bid",
+    bi="Bid Increment",
+    level="Pokémon Level",
+    total_ivs="Total IVs",
+    hp_iv="HP IV",
+    atk_iv="ATK IV",
+    def_iv="DEF IV",
+    spdef_iv="SPDEF IV",
+    spatk_iv="SPATK IV",
+    spd_iv="SPD IV"
+)
+async def register(interaction: discord.Interaction, pokemon: str, sb: int, bi: int, level: int, total_ivs: int, hp_iv: int, atk_iv: int, def_iv: int, spdef_iv: int, spatk_iv: int, spd_iv: int):
+    if AUCTION_ROLE_ID not in [role.id for role in interaction.user.roles]:
+        return await interaction.response.send_message("You do not have permission to register Pokémon.", ephemeral=True)
+    
+    if len(auctions) >= 10:
+        return await interaction.response.send_message("Auction slots are full for today!", ephemeral=True)
 
     auction_data = {
-        "owner": ctx.author.mention,
-        "pokemon": pokemon_name,
+        "owner": interaction.user.mention,
+        "pokemon": pokemon,
         "sb": sb,
         "bi": bi,
         "level": level,
         "total_ivs": total_ivs,
         "ivs": f"HP: {hp_iv}, ATK: {atk_iv}, DEF: {def_iv}, SPDEF: {spdef_iv}, SPATK: {spatk_iv}, SPD: {spd_iv}",
-        "highest_bid": sb,
+        "highest_bid": None,
         "highest_bidder": None
     }
     auctions.append(auction_data)
-    await ctx.respond(f"✅ **{pokemon_name}** registered for auction!")
 
-# Start Auction Command
-@bot.command(name="as")
-async def start_auction(ctx):
+    await interaction.response.send_message(f"✅ **{pokemon} registered for auction!**", ephemeral=True)
+
+@bot.command()
+async def as(ctx):
     if ctx.channel.id != AUCTION_CHANNEL_ID:
         return
 
-    if len(auctions) == 0:
-        await ctx.send("No Pokémon registered for auction today.")
-        return
+    if not auctions:
+        return await ctx.send("No Pokémon are registered for auction today.")
 
+    await ctx.send("🚀 **Auction Starting Now!** 🚀")
+    
     for auction in auctions:
+        await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=False)
+        
         embed = discord.Embed(
             title=f"✨ {auction['pokemon']} Auction ✨" if "shiny" in auction["pokemon"].lower() else f"{auction['pokemon']} Auction",
             description=f"**Owner:** {auction['owner']}\n"
@@ -60,56 +81,36 @@ async def start_auction(ctx):
             color=discord.Color.blue()
         )
         embed.set_footer(text="Place your bid using @bot bid <amount>")
+        message = await ctx.send(embed=embed)
 
-        # Lock channel, post auction, unlock channel
-        await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=False)
-        auction_msg = await ctx.send(embed=embed)
-        await ctx.channel.send("🔹 **Only bidding allowed. No chatting!**")
+        await asyncio.sleep(3)
+        await ctx.send("📜 **Auction Rules:**\n- Only bidding allowed.\n- Use `@bot bid <amount>` to place a bid.\n- No chatting allowed.")
         await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=True)
+        
+        highest_bid = auction["sb"]
+        highest_bidder = None
 
-        await asyncio.sleep(10)  # Wait 10s before allowing bids
-        await bid_countdown(ctx, auction_msg, auction)
+        for _ in range(10):  # 10 rounds of bidding max
+            try:
+                msg = await bot.wait_for("message", timeout=10, check=lambda m: m.channel.id == ctx.channel.id and m.content.startswith("@bot bid"))
+                bid_amount = int(msg.content.split()[2])
 
-# Bidding Command
-@bot.command(name="bid")
-async def place_bid(ctx, amount: int):
-    if ctx.channel.id != AUCTION_CHANNEL_ID:
-        return
+                if bid_amount >= highest_bid + auction["bi"]:
+                    highest_bid = bid_amount
+                    highest_bidder = msg.author
+                    await ctx.send(f"💰 **New Highest Bid:** {highest_bid} credits by {highest_bidder.mention}")
 
-    if AUCTION_ROLE_ID not in [role.id for role in ctx.author.roles]:
-        await ctx.send("You don't have permission to bid.")
-        return
+            except asyncio.TimeoutError:
+                break
 
-    if not auctions:
-        await ctx.send("No active auction.")
-        return
+        await ctx.send(f"⏳ No new bids, finalizing auction...")
 
-    auction = auctions[0]  
+        if highest_bidder:
+            await ctx.send(f"🎉 **Auction Won by {highest_bidder.mention} for {highest_bid} credits!**")
+            await ctx.send(f"{auction['owner']} Auction Ended. Please trade.")
 
-    if amount < auction["highest_bid"] + auction["bi"]:
-        await ctx.send(f"Bid must be at least **{auction['highest_bid'] + auction['bi']} credits**.")
-        return
+        auctions.remove(auction)
 
-    auction["highest_bid"] = amount
-    auction["highest_bidder"] = ctx.author.mention
-    await ctx.send(f"🎉 **{ctx.author.mention}** is now the highest bidder with **{amount} credits**!")
+    await ctx.send("🎯 **Today's Auctions Have Ended!**")
 
-# Bidding Countdown
-async def bid_countdown(ctx, auction_msg, auction):
-    await asyncio.sleep(10)  
-
-    if auction["highest_bidder"]:
-        await ctx.send(f"🏆 {auction['highest_bidder']} wins the **{auction['pokemon']}** for **{auction['highest_bid']} credits**!")
-        await ctx.send(f"{auction['owner']}, auction ended. Please trade.")
-    else:
-        await ctx.send("No bids placed. Auction ended.")
-
-    auctions.remove(auction)
-
-# Error Handling
-@bot.event
-async def on_command_error(ctx, error):
-    await ctx.send(f"⚠️ Error: {error}")
-
-# Start Bot
-bot.run(os.getenv("DISCORD_TOKEN"))
+bot.run(TOKEN)
