@@ -183,11 +183,12 @@ async def setannounce(ctx, channel: discord.TextChannel):
 
 
 # Run the bot
-bot.run(TOKEN)import discord
+import discord
 from discord.ext import commands
 from discord import app_commands
 import os
 import asyncio
+bot.run(TOKEN)
 
 # Load environment variables
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
