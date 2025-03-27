@@ -1,16 +1,30 @@
 import os
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from discord import app_commands
 import asyncio
+from flask import Flask
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 AUCTION_CHANNEL_ID = int(os.getenv("AUCTION_CHANNEL_ID"))
 REGISTER_CHANNEL_ID = int(os.getenv("REGISTER_CHANNEL_ID"))
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
 AUCTION_ROLE_ID = int(os.getenv("AUCTION_ROLE_ID"))
+PORT = int(os.getenv("PORT", 8080))  # Default port 8080
 
-bot = commands.Bot(command_prefix="@", intents=discord.Intents.all())
+# Enable all intents
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix="@", intents=intents)
+
+# Flask Web Server for Render
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    app.run(host="0.0.0.0", port=PORT)
 
 auctions = []  # Stores auction Pokémon details
 
@@ -19,6 +33,11 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
     await bot.tree.sync()
     print("Slash commands synced!")
+
+    # Send a log message when the bot starts
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        await log_channel.send("✅ Bot has started and is online!")
 
 # Slash Command for Registration
 @bot.tree.command(name="register", description="Register a Pokémon for auction")
@@ -112,5 +131,9 @@ async def auctionstart(ctx):
         auctions.remove(auction)
 
     await ctx.send("🎯 **Today's Auctions Have Ended!**")
+
+# Run Flask in a separate thread to keep bot alive
+import threading
+threading.Thread(target=run_flask, daemon=True).start()
 
 bot.run(TOKEN)
