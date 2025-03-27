@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 import os
 import asyncio
 
@@ -13,11 +14,9 @@ PORT = int(os.getenv("PORT", "8080"))  # Port for Render hosting
 
 # Enable all intents
 intents = discord.Intents.all()
-
-# Set up the bot
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Store auction data
+# Auction data storage
 auction_data = None
 highest_bid = 0
 highest_bidder = None
@@ -27,16 +26,17 @@ bid_increment = 0
 
 @bot.event
 async def on_ready():
+    await bot.tree.sync()  # Sync slash commands globally
     print(f"Logged in as {bot.user}")
     print("Bot is ready!")
 
 
 # Registration command
-@bot.slash_command(name="register", description="Register a Pokémon for auction.")
-async def register(ctx, pokemon: str, start_bid: int, bid_increment_value: int, level: int, total_ivs: int, hp_iv: int, atk_iv: int, def_iv: int, spa_iv: int, spd_iv: int, spe_iv: int):
-    role = discord.utils.get(ctx.guild.roles, id=AUCTION_ROLE_ID)
-    if role not in ctx.author.roles:
-        await ctx.respond("You don't have permission to register Pokémon!", ephemeral=True)
+@bot.tree.command(name="register", description="Register a Pokémon for auction.")
+async def register(interaction: discord.Interaction, pokemon: str, start_bid: int, bid_increment_value: int, level: int, total_ivs: int, hp_iv: int, atk_iv: int, def_iv: int, spa_iv: int, spd_iv: int, spe_iv: int):
+    role = discord.utils.get(interaction.guild.roles, id=AUCTION_ROLE_ID)
+    if role not in interaction.user.roles:
+        await interaction.response.send_message("You don't have permission to register Pokémon!", ephemeral=True)
         return
 
     global auction_data, bid_increment
@@ -50,12 +50,12 @@ async def register(ctx, pokemon: str, start_bid: int, bid_increment_value: int, 
     }
     bid_increment = bid_increment_value
 
-    await ctx.respond(f"Pokémon {pokemon} registered for auction with a starting bid of {start_bid}!")
+    await interaction.response.send_message(f"Pokémon {pokemon} registered for auction with a starting bid of {start_bid}!")
 
 
 # Auction start command
 @bot.command(name="auctionstart")
-async def start_auction(ctx):
+async def auction_start(ctx):
     global auction_data, auction_active, highest_bid, highest_bidder
 
     if auction_active:
@@ -70,11 +70,17 @@ async def start_auction(ctx):
     highest_bidder = None
 
     auction_embed = discord.Embed(
-        title=f"{'✨ ' if 'shiny' in auction_data['pokemon'].lower() else ''}{auction_data['pokemon']} Auction {'✨ ' if 'shiny' in auction_data['pokemon'].lower() else ''}",
-        description=f"**Starting Bid:** {auction_data['start_bid']}\n**Bid Increment:** {auction_data['bid_increment']}\n**Level:** {auction_data['level']}\n**Total IVs:** {auction_data['total_ivs']}\n**Stats:** {auction_data['ivs']}",
+        title=f"{'✨ ' if 'shiny' in auction_data['pokemon'].lower() else ''}{auction_data['pokemon']} Auction{' ✨' if 'shiny' in auction_data['pokemon'].lower() else ''}",
+        description=(
+            f"**Starting Bid:** {auction_data['start_bid']}\n"
+            f"**Bid Increment:** {auction_data['bid_increment']}\n"
+            f"**Level:** {auction_data['level']}\n"
+            f"**Total IVs:** {auction_data['total_ivs']}\n"
+            f"**Stats:** {auction_data['ivs']}"
+        ),
         color=discord.Color.blue()
     )
-    
+
     auction_channel = bot.get_channel(AUCTION_CHANNEL_ID)
     if auction_channel:
         await auction_channel.send(embed=auction_embed)
@@ -83,7 +89,7 @@ async def start_auction(ctx):
 
 
 # Bidding command
-@bot.command()
+@bot.command(name="bid")
 async def bid(ctx, amount: int):
     global highest_bid, highest_bidder, auction_active, bid_increment
 
@@ -99,7 +105,7 @@ async def bid(ctx, amount: int):
     await ctx.send(f"{ctx.author.mention} placed a bid of {amount}!")
 
     # Start countdown
-    await countdown(ctx)
+    asyncio.create_task(countdown(ctx))
 
 
 async def countdown(ctx):
@@ -115,7 +121,7 @@ async def countdown(ctx):
 
 
 # Cancel auction command (Admin only)
-@bot.command()
+@bot.command(name="cancel")
 @commands.has_permissions(administrator=True)
 async def cancel(ctx):
     global auction_active
@@ -141,7 +147,7 @@ async def leaderboard(ctx):
 
 
 # Moderation commands
-@bot.command()
+@bot.command(name="warn")
 @commands.has_permissions(manage_messages=True)
 async def warn(ctx, member: discord.Member, *, reason="No reason provided"):
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
@@ -150,25 +156,25 @@ async def warn(ctx, member: discord.Member, *, reason="No reason provided"):
     await ctx.send(f"{member.mention} has been warned.")
 
 
-@bot.command()
+@bot.command(name="blacklist")
 @commands.has_permissions(manage_messages=True)
 async def blacklist(ctx, member: discord.Member):
     await ctx.send(f"{member.mention} has been blacklisted from bidding.")
 
 
-@bot.command()
+@bot.command(name="unblacklist")
 @commands.has_permissions(manage_messages=True)
 async def unblacklist(ctx, member: discord.Member):
     await ctx.send(f"{member.mention} has been removed from the blacklist.")
 
 
-@bot.command()
+@bot.command(name="setrules")
 @commands.has_permissions(manage_channels=True)
 async def setrules(ctx, *, rules):
     await ctx.send(f"Auction rules updated:\n{rules}")
 
 
-@bot.command()
+@bot.command(name="setannounce")
 @commands.has_permissions(manage_channels=True)
 async def setannounce(ctx, channel: discord.TextChannel):
     global ANNOUNCEMENT_CHANNEL_ID
