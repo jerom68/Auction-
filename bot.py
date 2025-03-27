@@ -9,8 +9,6 @@ import flask
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 AUCTION_CHANNEL_ID = int(os.getenv("AUCTION_CHANNEL_ID", "0"))
 REGISTER_CHANNEL_ID = int(os.getenv("REGISTER_CHANNEL_ID", "0"))
-LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
-AUCTION_ROLE_ID = int(os.getenv("AUCTION_ROLE_ID", "0"))
 PORT = int(os.getenv("PORT", "8080"))  # Port for Render hosting
 
 # Enable all intents
@@ -33,66 +31,53 @@ async def on_ready():
 
 # Modal for Pokémon Registration
 class RegisterModal(discord.ui.Modal, title="Register Pokémon for Auction"):
-    def __init__(self, ctx):
+    def __init__(self):
         super().__init__()
-        self.ctx = ctx
 
-        self.pokemon = discord.ui.TextInput(label="Pokémon Name", placeholder="Enter Pokémon name")
-        self.start_bid = discord.ui.TextInput(label="Starting Bid", placeholder="Enter starting bid", style=discord.TextStyle.short)
-        self.bid_increment_value = discord.ui.TextInput(label="Bid Increment", placeholder="Enter minimum bid increment", style=discord.TextStyle.short)
-        self.level = discord.ui.TextInput(label="Level", placeholder="Enter Pokémon level", style=discord.TextStyle.short)
-        self.total_ivs = discord.ui.TextInput(label="Total IVs", placeholder="Enter total IVs", style=discord.TextStyle.short)
-        self.hp_iv = discord.ui.TextInput(label="HP IV", placeholder="Enter HP IV", style=discord.TextStyle.short)
-        self.atk_iv = discord.ui.TextInput(label="ATK IV", placeholder="Enter ATK IV", style=discord.TextStyle.short)
-        self.def_iv = discord.ui.TextInput(label="DEF IV", placeholder="Enter DEF IV", style=discord.TextStyle.short)
-        self.spa_iv = discord.ui.TextInput(label="SpA IV", placeholder="Enter SpA IV", style=discord.TextStyle.short)
-        self.spd_iv = discord.ui.TextInput(label="SpD IV", placeholder="Enter SpD IV", style=discord.TextStyle.short)
-        self.spe_iv = discord.ui.TextInput(label="SPE IV", placeholder="Enter Speed IV", style=discord.TextStyle.short)
-
-        self.add_item(self.pokemon)
-        self.add_item(self.start_bid)
-        self.add_item(self.bid_increment_value)
-        self.add_item(self.level)
-        self.add_item(self.total_ivs)
-        self.add_item(self.hp_iv)
-        self.add_item(self.atk_iv)
-        self.add_item(self.def_iv)
-        self.add_item(self.spa_iv)
-        self.add_item(self.spd_iv)
-        self.add_item(self.spe_iv)
+        self.add_item(discord.ui.TextInput(label="Pokémon Name", placeholder="Enter Pokémon name"))
+        self.add_item(discord.ui.TextInput(label="Starting Bid", placeholder="Enter starting bid", style=discord.TextStyle.short))
+        self.add_item(discord.ui.TextInput(label="Bid Increment", placeholder="Enter minimum bid increment", style=discord.TextStyle.short))
+        self.add_item(discord.ui.TextInput(label="Level", placeholder="Enter Pokémon level", style=discord.TextStyle.short))
+        self.add_item(discord.ui.TextInput(label="Total IVs", placeholder="Enter total IVs", style=discord.TextStyle.short))
+        self.add_item(discord.ui.TextInput(label="HP IV", placeholder="Enter HP IV", style=discord.TextStyle.short))
+        self.add_item(discord.ui.TextInput(label="ATK IV", placeholder="Enter ATK IV", style=discord.TextStyle.short))
+        self.add_item(discord.ui.TextInput(label="DEF IV", placeholder="Enter DEF IV", style=discord.TextStyle.short))
+        self.add_item(discord.ui.TextInput(label="SpA IV", placeholder="Enter SpA IV", style=discord.TextStyle.short))
+        self.add_item(discord.ui.TextInput(label="SpD IV", placeholder="Enter SpD IV", style=discord.TextStyle.short))
+        self.add_item(discord.ui.TextInput(label="SPD IV", placeholder="Enter Speed IV", style=discord.TextStyle.short))
 
     async def on_submit(self, interaction: discord.Interaction):
-        role = discord.utils.get(interaction.guild.roles, id=AUCTION_ROLE_ID)
-        if role not in interaction.user.roles:
-            await interaction.response.send_message("You don't have permission to register Pokémon!", ephemeral=True)
-            return
-
         global auction_data, bid_increment
+
+        fields = [item.value for item in self.children]
         auction_data = {
-            "pokemon": self.pokemon.value,
-            "start_bid": int(self.start_bid.value),
-            "bid_increment": int(self.bid_increment_value.value),
-            "level": int(self.level.value),
-            "total_ivs": int(self.total_ivs.value),
+            "pokemon": fields[0],
+            "start_bid": int(fields[1]),
+            "bid_increment": int(fields[2]),
+            "level": int(fields[3]),
+            "total_ivs": int(fields[4]),
             "ivs": {
-                "HP": int(self.hp_iv.value),
-                "ATK": int(self.atk_iv.value),
-                "DEF": int(self.def_iv.value),
-                "SpA": int(self.spa_iv.value),
-                "SpD": int(self.spd_iv.value),
-                "SPD": int(self.spe_iv.value),
+                "HP": int(fields[5]),
+                "ATK": int(fields[6]),
+                "DEF": int(fields[7]),
+                "SpA": int(fields[8]),
+                "SpD": int(fields[9]),
+                "SPD": int(fields[10]),
             },
         }
-        bid_increment = int(self.bid_increment_value.value)
+        bid_increment = int(fields[2])
 
-        await interaction.response.send_message(f"Pokémon {self.pokemon.value} registered for auction with a starting bid of {self.start_bid.value}!")
+        await interaction.response.send_message(f"✅ **Pokémon {fields[0]} has been registered for auction!**\n"
+                                               f"**Starting Bid:** {fields[1]}\n"
+                                               f"**Bid Increment:** {fields[2]}\n"
+                                               f"**Level:** {fields[3]}\n"
+                                               f"**Total IVs:** {fields[4]}")
 
 
 # Command to register Pokémon
 @bot.command(name="register")
 async def register(ctx):
-    modal = RegisterModal(ctx)
-    await ctx.send("Please fill out the modal to register your Pokémon!", view=modal)
+    await ctx.send("Please fill out the modal to register your Pokémon!", view=discord.ui.View().add_item(RegisterModal()))
 
 
 # Auction start command
@@ -174,28 +159,6 @@ async def cancel(ctx):
 
     auction_active = False
     await ctx.send("Auction has been cancelled.")
-
-
-# Moderation commands
-@bot.command(name="warn")
-@commands.has_permissions(manage_messages=True)
-async def warn(ctx, member: discord.Member, *, reason="No reason provided"):
-    log_channel = bot.get_channel(LOG_CHANNEL_ID)
-    if log_channel:
-        await log_channel.send(f"{member.mention} was warned for: {reason}")
-    await ctx.send(f"{member.mention} has been warned.")
-
-
-@bot.command(name="blacklist")
-@commands.has_permissions(manage_messages=True)
-async def blacklist(ctx, member: discord.Member):
-    await ctx.send(f"{member.mention} has been blacklisted from bidding.")
-
-
-@bot.command(name="unblacklist")
-@commands.has_permissions(manage_messages=True)
-async def unblacklist(ctx, member: discord.Member):
-    await ctx.send(f"{member.mention} has been removed from the blacklist.")
 
 
 # Keep bot alive with a port for Render
