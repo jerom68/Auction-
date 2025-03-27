@@ -58,7 +58,7 @@ async def register(interaction: discord.Interaction, pokemon: str, sb: int, bi: 
     await interaction.response.send_message(f"✅ **{pokemon} registered for auction!**", ephemeral=True)
 
 @bot.command()
-async def as(ctx):
+async def auctionstart(ctx):
     if ctx.channel.id != AUCTION_CHANNEL_ID:
         return
 
