@@ -381,16 +381,18 @@ async def setannounce(ctx, channel: discord.TextChannel):
 
 
 # Keep bot alive with a port for Render
-import flask
+import os
+from flask import Flask
 
-app = flask.Flask(__name__)
+app = Flask(__name__)
 
-@app.route("/")
+@app.route('/')
 def home():
     return "Bot is running!"
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+if __name__ == '__main__':
+    port = int(os.getenv("PORT", 8080))  # Default port 8080
+    app.run(host='0.0.0.0', port=port)
 
 # Run the bot
 bot.run(TOKEN)
