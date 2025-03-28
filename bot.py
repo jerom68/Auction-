@@ -1,196 +1,142 @@
 import discord
 from discord.ext import commands
-import os
+from discord import app_commands
 import asyncio
-import threading
-import flask
+import os
 
 # Load environment variables
-TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-AUCTION_CHANNEL_ID = int(os.getenv("AUCTION_CHANNEL_ID", "0"))
-REGISTER_CHANNEL_ID = int(os.getenv("REGISTER_CHANNEL_ID", "0"))
-LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
-PORT = int(os.getenv("PORT", "8080"))  # Port for Render hosting
+from dotenv import load_dotenv
+load_dotenv()
 
-# Enable all intents
+TOKEN = os.getenv("TOKEN")
+AUCTION_CHANNEL_ID = int(os.getenv("AUCTION_CHANNEL_ID"))  # Channel where auctions happen
+LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))  # Channel for logging
+
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents)
-bot = commands.Bot(intents=intents)  # Remove default prefix for slash commands
+bot = commands.Bot(command_prefix="!", intents=intents)  # Set a command prefix for compatibility
 
-# Auction data storage
-auction_data = None
-highest_bid = 0
-highest_bidder = None
-auction_active = False
-bid_increment = 0
+# ---------------------------- Slash Command: /register ----------------------------
 
-
-@bot.event
-async def on_ready():
-    print(f"Logged in as {bot.user}")
-    print("Bot is ready!")
-
-
-# Modal for Pokémon Registration (Lowercase Inputs)
-class registermodal(discord.ui.Modal, title="Register Pokémon for Auction"):
-    def __init__(self):
-        super().__init__()
-
-        self.add_item(discord.ui.TextInput(label="pokemon name", placeholder="Enter Pokémon name"))
-        self.add_item(discord.ui.TextInput(label="starting bid", placeholder="Enter starting bid", style=discord.TextStyle.short))
-        self.add_item(discord.ui.TextInput(label="bid increment", placeholder="Enter minimum bid increment", style=discord.TextStyle.short))
-        self.add_item(discord.ui.TextInput(label="level", placeholder="Enter Pokémon level", style=discord.TextStyle.short))
-        self.add_item(discord.ui.TextInput(label="total ivs", placeholder="Enter total IVs", style=discord.TextStyle.short))
-        self.add_item(discord.ui.TextInput(label="hp iv", placeholder="Enter HP IV", style=discord.TextStyle.short))
-        self.add_item(discord.ui.TextInput(label="atk iv", placeholder="Enter ATK IV", style=discord.TextStyle.short))
-        self.add_item(discord.ui.TextInput(label="def iv", placeholder="Enter DEF IV", style=discord.TextStyle.short))
-        self.add_item(discord.ui.TextInput(label="spa iv", placeholder="Enter SpA IV", style=discord.TextStyle.short))
-        self.add_item(discord.ui.TextInput(label="spd iv", placeholder="Enter SpD IV", style=discord.TextStyle.short))
-        self.add_item(discord.ui.TextInput(label="spd iv", placeholder="Enter Speed IV", style=discord.TextStyle.short))
+class RegisterModal(discord.ui.Modal, title="Register a Pokémon"):
+    name = discord.ui.TextInput(label="Pokémon Name", placeholder="Enter Pokémon Name")
+    start_bid = discord.ui.TextInput(label="Starting Bid", placeholder="Enter starting bid", required=True)
+    bid_increment = discord.ui.TextInput(label="Bid Increment", placeholder="Enter minimum bid increment", required=True)
+    level = discord.ui.TextInput(label="Level", placeholder="Enter Pokémon level", required=True)
+    total_ivs = discord.ui.TextInput(label="Total IVs", placeholder="Enter total IVs", required=True)
+    hp_iv = discord.ui.TextInput(label="HP IV", placeholder="Enter HP IV", required=True)
+    atk_iv = discord.ui.TextInput(label="ATK IV", placeholder="Enter ATK IV", required=True)
+    def_iv = discord.ui.TextInput(label="DEF IV", placeholder="Enter DEF IV", required=True)
+    spa_iv = discord.ui.TextInput(label="SpA IV", placeholder="Enter SpA IV", required=True)
+    spd_iv = discord.ui.TextInput(label="SpD IV", placeholder="Enter SpD IV", required=True)
+    spd_iv_2 = discord.ui.TextInput(label="SPD IV", placeholder="Enter SPD IV", required=True)
 
     async def on_submit(self, interaction: discord.Interaction):
-        global auction_data, bid_increment
+        embed = discord.Embed(title="Pokémon Registered", color=discord.Color.green())
+        embed.add_field(name="Pokémon", value=self.name.value, inline=True)
+        embed.add_field(name="Starting Bid", value=self.start_bid.value, inline=True)
+        embed.add_field(name="Bid Increment", value=self.bid_increment.value, inline=True)
+        embed.add_field(name="Level", value=self.level.value, inline=True)
+        embed.add_field(name="Total IVs", value=self.total_ivs.value, inline=False)
+        embed.add_field(name="IVs", value=f"HP: {self.hp_iv.value}, ATK: {self.atk_iv.value}, DEF: {self.def_iv.value}, SpA: {self.spa_iv.value}, SpD: {self.spd_iv.value}, SPD: {self.spd_iv_2.value}", inline=False)
 
-        fields = [item.value for item in self.children]
-        auction_data = {
-            "pokemon": fields[0],
-            "start_bid": int(fields[1]),
-            "bid_increment": int(fields[2]),
-            "level": int(fields[3]),
-            "total_ivs": int(fields[4]),
-            "ivs": {
-                "HP": int(fields[5]),
-                "ATK": int(fields[6]),
-                "DEF": int(fields[7]),
-                "SpA": int(fields[8]),
-                "SpD": int(fields[9]),
-                "SPD": int(fields[10]),
-            },
-        }
-        bid_increment = int(fields[2])
+        auction_channel = bot.get_channel(AUCTION_CHANNEL_ID)
+        if auction_channel:
+            await auction_channel.send(embed=embed)
 
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
         if log_channel:
-            await log_channel.send(f"📜 **New Registration:** {fields[0]} - {fields[1]} (Bid Increment: {fields[2]})")
+            await log_channel.send(f"New Pokémon registered by {interaction.user.mention}", embed=embed)
 
-        await interaction.response.send_message(f"✅ **Pokémon {fields[0]} has been registered for auction!**\n"
-                                               f"**Starting Bid:** {fields[1]}\n"
-                                               f"**Bid Increment:** {fields[2]}\n"
-                                               f"**Level:** {fields[3]}\n"
-                                               f"**Total IVs:** {fields[4]}", ephemeral=True)
+        await interaction.response.send_message("Your Pokémon has been registered!", ephemeral=True)
 
-
-# Slash Command for Registration
-@bot.tree.command(name="register", description="Register a Pokémon for auction.")
+@bot.tree.command(name="register", description="Register a Pokémon for the auction.")
 async def register(interaction: discord.Interaction):
-    await interaction.response.send_modal(registermodal())
+    await interaction.response.send_modal(RegisterModal())
 
+# ---------------------------- Bidding System ----------------------------
 
-# Auction start command
-@bot.command(name="auctionstart")
-async def auction_start(ctx):
-    global auction_data, auction_active, highest_bid, highest_bidder
+active_auction = None
+highest_bidder = None
+highest_bid = 0
 
-    if auction_active:
-        await ctx.send("An auction is already in progress!")
-        return
-    if not auction_data:
-        await ctx.send("No Pokémon registered for auction.")
-        return
+@bot.command(name="start_auction")
+async def start_auction(ctx, pokemon: str, start_bid: int, bid_increment: int):
+    global active_auction, highest_bidder, highest_bid
 
-    auction_active = True
-    highest_bid = auction_data["start_bid"]
+    active_auction = pokemon
+    highest_bid = start_bid
     highest_bidder = None
 
-    auction_embed = discord.Embed(
-        title=f"{'✨ ' if 'shiny' in auction_data['pokemon'].lower() else ''}{auction_data['pokemon']} Auction{' ✨' if 'shiny' in auction_data['pokemon'].lower() else ''}",
-        description=(
-            f"**Starting Bid:** {auction_data['start_bid']}\n"
-            f"**Bid Increment:** {auction_data['bid_increment']}\n"
-            f"**Level:** {auction_data['level']}\n"
-            f"**Total IVs:** {auction_data['total_ivs']}\n"
-            f"**Stats:** {auction_data['ivs']}"
-        ),
-        color=discord.Color.blue()
-    )
+    embed = discord.Embed(title=f"Auction Started: {pokemon}", color=discord.Color.blue())
+    embed.add_field(name="Starting Bid", value=f"{start_bid} credits", inline=True)
+    embed.add_field(name="Bid Increment", value=f"{bid_increment} credits", inline=True)
+    embed.set_footer(text="Use !bid <amount> to place a bid.")
 
-    auction_channel = bot.get_channel(AUCTION_CHANNEL_ID)
-    if auction_channel:
-        await auction_channel.send(embed=auction_embed)
-    else:
-        await ctx.send("Auction channel is not set properly.")
+    await ctx.send(embed=embed)
 
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        await log_channel.send(f"Auction started for {pokemon} by {ctx.author.mention}.")
 
-# Bidding command
 @bot.command(name="bid")
 async def bid(ctx, amount: int):
-    global highest_bid, highest_bidder, auction_active, bid_increment
+    global highest_bid, highest_bidder, active_auction
 
-    if not auction_active:
-        await ctx.send("No auction is currently active!")
+    if active_auction is None:
+        await ctx.send("No active auction right now!")
         return
-    if amount < highest_bid + bid_increment:
-        await ctx.send(f"Minimum bid must be at least {highest_bid + bid_increment}!")
+
+    if amount <= highest_bid:
+        await ctx.send(f"Your bid must be higher than the current highest bid: {highest_bid} credits.")
         return
 
     highest_bid = amount
     highest_bidder = ctx.author
-    await ctx.send(f"{ctx.author.mention} placed a bid of {amount}!")
 
-    # Log bid
+    await ctx.send(f"{ctx.author.mention} is now the highest bidder with {amount} credits!")
+
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
     if log_channel:
-        await log_channel.send(f"💰 **Bid:** {ctx.author.mention} bid {amount}!")
+        await log_channel.send(f"New bid: {ctx.author.mention} bid {amount} credits on {active_auction}.")
 
-    # Start countdown
-    asyncio.create_task(countdown(ctx))
+# ---------------------------- Moderation Commands ----------------------------
 
+@bot.command(name="warn")
+async def warn(ctx, member: discord.Member, *, reason: str):
+    embed = discord.Embed(title="Warning Issued", color=discord.Color.orange())
+    embed.add_field(name="User", value=member.mention, inline=True)
+    embed.add_field(name="Reason", value=reason, inline=False)
+    
+    await ctx.send(embed=embed)
 
-async def countdown(ctx):
-    global highest_bidder, auction_active
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        await log_channel.send(f"{member.mention} was warned by {ctx.author.mention} for: {reason}")
 
-    await asyncio.sleep(10)
-    if highest_bidder:
-        for i in range(5, 0, -1):
-            await ctx.send(f"Auction closing in {i} seconds...")
-            await asyncio.sleep(1)
-        await ctx.send(f"Auction ended! {highest_bidder.mention} won with {highest_bid}!")
-        auction_active = False
+@bot.command(name="blacklist")
+async def blacklist(ctx, member: discord.Member):
+    await ctx.send(f"{member.mention} has been blacklisted from bidding.")
 
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        await log_channel.send(f"{member.mention} was blacklisted by {ctx.author.mention}.")
 
-# Cancel auction command (Admin only)
-@bot.command(name="cancel")
-@commands.has_permissions(administrator=True)
-async def cancel(ctx):
-    global auction_active
+# ---------------------------- Ping Command ----------------------------
 
-    if not auction_active:
-        await ctx.send("No auction to cancel!")
-        return
+@bot.command(name="ping")
+async def ping(ctx):
+    latency = round(bot.latency * 1000, 2)
+    await ctx.send(f"Pong! 🏓 {latency}ms")
 
-    auction_active = False
-    await ctx.send("Auction has been cancelled.")
+# ---------------------------- Bot Events ----------------------------
 
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user}")
+    try:
+        synced = await bot.tree.sync()
+        print(f"Synced {len(synced)} slash commands.")
+    except Exception as e:
+        print(f"Error syncing commands: {e}")
 
-# Ping command
-@bot.tree.command(name="ping", description="Check bot latency.")
-async def ping(interaction: discord.Interaction):
-    latency = round(bot.latency * 1000)
-    await interaction.response.send_message(f"🏓 Pong! `{latency}ms`", ephemeral=True)
-
-
-# Keep bot alive with a port for Render
-app = flask.Flask(__name__)
-
-@app.route("/")
-def home():
-    return "Bot is running!"
-
-def run_flask():
-    app.run(host="0.0.0.0", port=PORT, threaded=True)
-
-# Run Flask in a separate thread
-threading.Thread(target=run_flask, daemon=True).start()
-
-# Run the bot
 bot.run(TOKEN)
