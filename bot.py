@@ -1,7 +1,10 @@
 import discord
 from discord.ext import commands
-import asyncio
 import os
+import asyncio
+import threading
+import uvicorn
+from fastapi import FastAPI
 
 # Load environment variables
 TOKEN = os.getenv("TOKEN")
@@ -11,6 +14,19 @@ REGISTER_CHANNEL_ID = int(os.getenv("REGISTER_CHANNEL_ID"))
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
 AUCTION_ROLE_ID = int(os.getenv("AUCTION_ROLE_ID"))
 
+# Initialize FastAPI for Render web service
+app = FastAPI()
+
+@app.get("/")
+def home():
+    return {"message": "Bot is running!"}
+
+def run_web():
+    """Runs the web server for Render to detect the port."""
+    port = int(os.getenv("PORT", 5000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
+
+# Initialize Discord Bot
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -173,8 +189,8 @@ async def leaderboard(ctx):
 
     await ctx.send(embed=embed)
 
-# Run the bot
+# Run the bot and web server
 if __name__ == "__main__":
-    import os
-    port = int(os.getenv("PORT", 5000))  # Required for Render
+    web_thread = threading.Thread(target=run_web)
+    web_thread.start()
     bot.run(TOKEN)
