@@ -1,14 +1,17 @@
 import discord
 import asyncio
 import os
+import threading
 from discord.ext import commands
 from dotenv import load_dotenv
+from flask import Flask
 
 load_dotenv()
 
-TOKEN = os.getenv("TOKEN")
+TOKEN = os.getenv("DISCORD_TOKEN")
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
 AUCTION_CHANNEL_ID = int(os.getenv("AUCTION_CHANNEL_ID"))
+PORT = int(os.getenv("PORT", 8080))  # Default port is 8080 if not set
 
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 
@@ -16,6 +19,19 @@ registrations = []
 auction_active = False
 bids = {}
 current_auction = None
+
+# Flask server to keep the bot alive
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    app.run(host="0.0.0.0", port=PORT)
+
+# Start Flask in a separate thread
+threading.Thread(target=run_flask, daemon=True).start()
 
 # 📌 Utility function for logging events in an embed
 async def log_event(title, description, color=discord.Color.blue()):
