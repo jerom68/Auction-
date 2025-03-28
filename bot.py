@@ -1,196 +1,164 @@
 import discord
 from discord.ext import commands
 import os
-import asyncio
 import threading
+import asyncio
 import uvicorn
 from fastapi import FastAPI
+import aiohttp  # For fetching Pokémon images
 
 # Load environment variables
 TOKEN = os.getenv("TOKEN")
-SERVER_ID = int(os.getenv("SERVER_ID"))
+SERVER_ID = int(os.getenv("SERVER_ID"))  # Ensure this is set in your environment variables
 AUCTION_CHANNEL_ID = int(os.getenv("AUCTION_CHANNEL_ID"))
 REGISTER_CHANNEL_ID = int(os.getenv("REGISTER_CHANNEL_ID"))
-LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
 AUCTION_ROLE_ID = int(os.getenv("AUCTION_ROLE_ID"))
+PORT = int(os.getenv("PORT", 8080))  # Default port for Render
 
-# Initialize FastAPI for Render web service
-app = FastAPI()
-
-@app.get("/")
-def home():
-    return {"message": "Bot is running!"}
-
-def run_web():
-    """Runs the web server for Render to detect the port."""
-    port = int(os.getenv("PORT", 5000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
-
-# Initialize Discord Bot
+# Discord bot setup
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Dictionary to store auction registrations
-registrations = {}
-
 # Auction-related variables
-current_auction = None
-bids = {}
+registrations = []
 auction_active = False
+bids = {}
 
-# Helper function to check for role
+# FastAPI app for Render's health check
+app = FastAPI()
+
+@app.get("/")
+async def home():
+    return {"status": "Bot is running!"}
+
+# Start FastAPI server in a separate thread
+def run_api():
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
+
+threading.Thread(target=run_api, daemon=True).start()
+
 def has_auction_role(user):
     return any(role.id == AUCTION_ROLE_ID for role in user.roles)
 
-# Registration Command
+@bot.event
+async def on_ready():
+    print(f"✅ {bot.user} is online and running!")
+
+@bot.event
+async def on_guild_join(guild):
+    """Automatically leaves any unauthorized servers."""
+    if guild.id != SERVER_ID:
+        await guild.leave()
+        print(f"❌ Left unauthorized server: {guild.name}")
+
+async def get_pokemon_image(name):
+    """Fetches the Pokémon image from PokéAPI."""
+    url = f"https://pokeapi.co/api/v2/pokemon/{name.lower()}"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            if response.status == 200:
+                data = await response.json()
+                return data["sprites"]["other"]["official-artwork"]["front_default"]
+            else:
+                return None  # No image found
+
 @bot.command()
 async def register(ctx):
-    """Guided Pokémon registration system."""
     if not has_auction_role(ctx.author):
-        await ctx.send("You do not have permission to register Pokémon for auctions.")
+        await ctx.send("❌ You do not have permission to register Pokémon.")
         return
-
-    questions = [
-        "Enter Pokémon Name:",
-        "Enter Starting Bid Amount:",
-        "Enter Minimum Bid Increment:",
-        "Enter Pokémon Level:",
-        "Enter Total IVs:",
-        "Enter HP IV:",
-        "Enter ATK IV:",
-        "Enter DEF IV:",
-        "Enter SpA IV:",
-        "Enter SpD IV:",
-        "Enter SPD IV:"
-    ]
-
-    answers = []
 
     def check(m):
         return m.author == ctx.author and m.channel == ctx.channel
 
-    for question in questions:
-        await ctx.send(question)
-        try:
-            msg = await bot.wait_for("message", check=check, timeout=120)
-            answers.append(msg.content)
-        except asyncio.TimeoutError:
-            await ctx.send("Registration timed out. Please try again.")
-            return
+    await ctx.send("Enter the Pokémon name:")
+    name = await bot.wait_for("message", check=check)
 
-    registrations[ctx.author.id] = {
-        "name": answers[0], "starting_bid": int(answers[1]), "min_bid_increment": int(answers[2]),
-        "level": int(answers[3]), "total_ivs": int(answers[4]),
-        "hp_iv": int(answers[5]), "atk_iv": int(answers[6]), "def_iv": int(answers[7]),
-        "spa_iv": int(answers[8]), "spd_iv": int(answers[9]), "spd_iv": int(answers[10])
+    await ctx.send("Enter the starting bid:")
+    starting_bid = await bot.wait_for("message", check=check)
+
+    await ctx.send("Enter the minimum bid increment:")
+    min_bid_increment = await bot.wait_for("message", check=check)
+
+    image_url = await get_pokemon_image(name.content)
+
+    pokemon = {
+        "owner": ctx.author,
+        "name": name.content,
+        "starting_bid": int(starting_bid.content),
+        "min_bid_increment": int(min_bid_increment.content),
+        "image_url": image_url
     }
+    registrations.append(pokemon)
 
     embed = discord.Embed(title="✅ Pokémon Registered!", color=discord.Color.green())
-    embed.add_field(name="Pokémon Name", value=answers[0], inline=False)
-    embed.add_field(name="Starting Bid", value=answers[1], inline=True)
-    embed.add_field(name="Min Bid Increment", value=answers[2], inline=True)
-    embed.add_field(name="Level", value=answers[3], inline=True)
-    embed.add_field(name="Total IVs", value=answers[4], inline=False)
-    embed.add_field(name="IVs", value=f"HP: {answers[5]}, ATK: {answers[6]}, DEF: {answers[7]}, SPA: {answers[8]}, SPD: {answers[9]}, SPD: {answers[10]}", inline=False)
+    embed.add_field(name="Pokémon Name", value=name.content, inline=False)
+    embed.add_field(name="Starting Bid", value=starting_bid.content, inline=True)
+    embed.add_field(name="Min Bid Increment", value=min_bid_increment.content, inline=True)
+    embed.set_footer(text="Your Pokémon has been registered successfully!")
+    
+    if image_url:
+        embed.set_thumbnail(url=image_url)
 
     await ctx.send(embed=embed)
 
-# Auction Start Command
 @bot.command()
 async def auctionstart(ctx):
-    """Starts an auction if there are registered Pokémon."""
-    global current_auction, bids, auction_active
-
-    if ctx.author.id not in registrations:
-        await ctx.send("You have not registered any Pokémon.")
-        return
+    global auction_active, bids
 
     if auction_active:
-        await ctx.send("An auction is already in progress!")
+        await ctx.send("❌ An auction is already in progress!")
+        return
+
+    if not registrations:
+        await ctx.send("❌ No Pokémon have been registered for auction.")
         return
 
     auction_active = True
-    current_auction = registrations.pop(ctx.author.id)
+    current_auction = registrations.pop(0)
 
     embed = discord.Embed(title=f"✨ {current_auction['name']} Auction ✨", color=discord.Color.gold())
     embed.add_field(name="Starting Bid", value=f"{current_auction['starting_bid']}", inline=True)
     embed.add_field(name="Min Bid Increment", value=f"{current_auction['min_bid_increment']}", inline=True)
-    embed.add_field(name="Level", value=f"{current_auction['level']}", inline=True)
-    embed.add_field(name="Total IVs", value=f"{current_auction['total_ivs']}", inline=True)
-    embed.add_field(name="IVs", value=f"HP: {current_auction['hp_iv']}, ATK: {current_auction['atk_iv']}, DEF: {current_auction['def_iv']}, SPA: {current_auction['spa_iv']}, SPD: {current_auction['spd_iv']}", inline=False)
     embed.set_footer(text="Place your bid using !bid <amount>")
 
+    if current_auction["image_url"]:
+        embed.set_thumbnail(url=current_auction["image_url"])
+
     auction_channel = bot.get_channel(AUCTION_CHANNEL_ID)
+
+    auction_rules = """
+**🏆 Auction Rules 🏆**
+- Place bids using `!bid <amount>`
+- Each bid must be **higher** than the last bid
+- Minimum increment: **{}**
+- Only users with the auction role can participate
+- The highest bid wins at the end of the auction!
+""".format(current_auction["min_bid_increment"])
+
+    await auction_channel.send(auction_rules)
     await auction_channel.send(embed=embed)
+    bids.clear()
 
-    bids = {}
-
-# Bidding Command
 @bot.command()
 async def bid(ctx, amount: int):
-    """Places a bid on the current auction."""
     global bids
 
     if not auction_active:
-        await ctx.send("There is no active auction right now.")
+        await ctx.send("❌ There is no active auction right now.")
         return
 
-    if amount < current_auction["starting_bid"]:
-        await ctx.send("Your bid must be at least the starting bid.")
-        return
-
-    if bids and amount <= max(bids.values()) + current_auction["min_bid_increment"]:
-        await ctx.send(f"You must bid at least {max(bids.values()) + current_auction['min_bid_increment']}.")
+    if bids and amount <= max(bids.values()):
+        await ctx.send(f"❌ Your bid must be higher than the current highest bid.")
         return
 
     bids[ctx.author.id] = amount
-    await ctx.send(f"{ctx.author.mention} has placed a bid of {amount}!")
+    await ctx.send(f"✅ {ctx.author.mention} has placed a bid of {amount}!")
 
-# Auction End Command
 @bot.command()
-async def auctionend(ctx):
-    """Ends the auction and announces the winner."""
-    global auction_active, current_auction, bids
+async def ping(ctx):
+    latency = round(bot.latency * 1000)
+    await ctx.send(f"🏓 Pong! Latency: {latency}ms")
 
-    if not auction_active:
-        await ctx.send("No auction is currently active.")
-        return
-
-    if not bids:
-        await ctx.send("No bids were placed. Auction canceled.")
-        auction_active = False
-        return
-
-    winner_id = max(bids, key=bids.get)
-    winner = ctx.guild.get_member(winner_id)
-    winning_bid = bids[winner_id]
-
-    embed = discord.Embed(title=f"🏆 Auction Ended - Winner: {winner.name} 🏆", color=discord.Color.blue())
-    embed.add_field(name="Winning Bid", value=f"{winning_bid}", inline=False)
-    embed.set_footer(text="Trade with the owner to claim your Pokémon!")
-
-    auction_channel = bot.get_channel(AUCTION_CHANNEL_ID)
-    await auction_channel.send(embed=embed)
-
-    auction_active = False
-    current_auction = None
-    bids = {}
-
-# Auction Leaderboard Command
-@bot.command()
-async def leaderboard(ctx):
-    """Displays top 5 users who bid the most."""
-    sorted_bidders = sorted(bids.items(), key=lambda x: x[1], reverse=True)[:5]
-
-    embed = discord.Embed(title="🏅 Top 5 Bidders 🏅", color=discord.Color.purple())
-    for user_id, amount in sorted_bidders:
-        user = ctx.guild.get_member(user_id)
-        embed.add_field(name=user.name, value=f"Bid: {amount}", inline=False)
-
-    await ctx.send(embed=embed)
-
-# Run the bot and web server
-if __name__ == "__main__":
-    web_thread = threading.Thread(target=run_web)
-    web_thread.start()
-    bot.run(TOKEN)
+# Start the bot
+bot.run(TOKEN)
